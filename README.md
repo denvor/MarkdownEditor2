@@ -1,12 +1,5 @@
 # Markdown Editor
 
-<div align="center">
-
-[![GitHub](https://img.shields.io/badge/GitHub-denvor/MarkdownEditor2-181717?logo=github)](https://github.com/denvor/MarkdownEditor2)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-</div>
-
 一个基于 Tauri 2.x 构建的现代分屏 Markdown 编辑器，左侧编辑、右侧实时预览，支持 PDF 导出和多主题切换。
 
 > 替代原有 Python + tkinter 版本，界面更现代，预览更流畅。
@@ -41,9 +34,9 @@ npx tauri build
 
 产物位于 `src-tauri/target/release/bundle/`。
 
-### 通过 exe 运行
+### 下载 exe
 
-双击 `MarkdownEditor.exe` 运行。
+在 [GitHub Releases](https://github.com/denvor/MarkdownEditor2/releases) 页面下载最新版本的 `MarkdownEditor.exe`，双击运行。
 
 **关联 .md 文件：** 右键任意 .md 文件 → 打开方式 → 选择其他应用 → 浏览 → 选择 `MarkdownEditor.exe` → 始终使用此应用打开。
 
