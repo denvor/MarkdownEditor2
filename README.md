@@ -22,6 +22,8 @@
 ### 开发运行
 
 ```bash
+git clone https://github.com/denvor/MarkdownEditor2.git
+cd MarkdownEditor2
 npm install
 npx tauri dev
 ```
