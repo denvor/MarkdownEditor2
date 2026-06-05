@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Markdown Editor</title>
+<script>
+  // 同步读取 localStorage 缓存的主题，消除启动白屏/闪烁
+  try {
+    var cfg = JSON.parse(localStorage.getItem('md-editor-config'));
+    if (cfg && cfg.theme) {
+      document.documentElement.className = cfg.theme;
+    }
+  } catch(e) {}
+</script>
+<link rel="stylesheet" href="/src/css/styles.css">
+</head>
+<body>
+
+<!-- Menu Bar -->
+<div class="menubar" id="menubar">
+  <div class="menu-item" data-menu="file">File
+    <div class="menu-dropdown">
+      <div class="dropdown-item" data-action="open">Open<span class="shortcut">Ctrl+O</span></div>
+      <div class="dropdown-item" data-action="save">Save<span class="shortcut">Ctrl+S</span></div>
+      <div class="dropdown-item" data-action="saveas">Save As</div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item" data-action="export">Export PDF</div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item" data-action="exit">Exit<span class="shortcut">Alt+F4</span></div>
+    </div>
+  </div>
+  <div class="menu-item" data-menu="edit">Edit
+    <div class="menu-dropdown">
+      <div class="dropdown-item" data-action="undo">Undo<span class="shortcut">Ctrl+Z</span></div>
+      <div class="dropdown-item" data-action="redo">Redo<span class="shortcut">Ctrl+Y</span></div>
+    </div>
+  </div>
+  <div class="menu-item" data-menu="view">View
+    <div class="menu-dropdown">
+      <div class="dropdown-item" data-action="zoom-in">Zoom In<span class="shortcut">Ctrl+=</span></div>
+      <div class="dropdown-item" data-action="zoom-out">Zoom Out<span class="shortcut">Ctrl+-</span></div>
+      <div class="dropdown-item" data-action="zoom-reset">Reset Zoom<span class="shortcut">Ctrl+0</span></div>
+    </div>
+  </div>
+  <div class="menu-item" data-menu="theme">Theme
+    <div class="menu-dropdown" id="themeMenu">
+      <div class="dropdown-item" data-theme="light">Light</div>
+      <div class="dropdown-item" data-theme="dark">Dark</div>
+      <div class="dropdown-item" data-theme="solarized-light">Solarized Light</div>
+      <div class="dropdown-item" data-theme="solarized-dark">Solarized Dark</div>
+    </div>
+  </div>
+  <div class="menu-item" data-menu="help">Help
+    <div class="menu-dropdown">
+      <div class="dropdown-item" data-action="about">About</div>
+    </div>
+  </div>
+</div>
+
+<!-- Main Area -->
+<div class="main-area">
+  <div class="pane editor-pane">
+    <div class="pane-label">Markdown</div>
+    <div class="toolbar" id="toolbar">
+      <button data-insert="# " title="Heading 1">H&#8321;</button>
+      <button data-insert="## " title="Heading 2">H&#8322;</button>
+      <button data-insert="### " title="Heading 3">H&#8323;</button>
+      <button data-insert="#### " title="Heading 4">H&#8324;</button>
+      <button data-insert="##### " title="Heading 5">H&#8325;</button>
+      <button data-insert="###### " title="Heading 6">H&#8326;</button>
+      <span class="sep"></span>
+      <button data-insert="**粗体**" title="Bold">B</button>
+      <button data-insert="*斜体*" title="Italic"><i>I</i></button>
+      <button data-insert="~~删除线~~" title="Strikethrough">S&#807;</button>
+      <span class="sep"></span>
+      <button data-insert="> " title="Blockquote">&#10077;</button>
+      <button data-insert="- " title="Unordered list">&#8226;</button>
+      <button data-insert="1. " title="Ordered list">1.</button>
+      <span class="sep"></span>
+      <button data-insert="[链接](url)" title="Link">&#128279;</button>
+      <button data-insert="![图片](src)" title="Image">&#128444;</button>
+      <span class="sep"></span>
+      <button data-insert="`代码`" title="Inline code">&lt;&gt;</button>
+      <button data-insert="&#10;```&#10;代码块&#10;```&#10;" title="Code block">{ }</button>
+      <button data-insert="&#10;| 列1 | 列2 | 列3 |&#10;| --- | --- | --- |&#10;| 内容 | 内容 | 内容 |&#10;" title="Table">&#8862;</button>
+      <button data-insert="&#10;---&#10;" title="Horizontal rule">&mdash;</button>
+    </div>
+    <textarea class="editor-textarea" id="editor" placeholder="在此输入 Markdown 内容…"></textarea>
+  </div>
+  <div class="pane preview-pane" id="preview"></div>
+</div>
+
+<!-- Status Bar -->
+<div class="statusbar">
+  <span id="statusFile">Untitled</span>
+  <span class="status-right"><span id="statusZoom">100%</span>&nbsp;&nbsp;<span id="statusInfo">Ln 1, Col 1</span></span>
+</div>
+
+<script type="module" src="/src/js/main.js"></script>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loadingOverlay" style="display:none;">
+  <div class="loading-card">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Exporting PDF...</div>
+  </div>
+</div>
+</body>
+</html>

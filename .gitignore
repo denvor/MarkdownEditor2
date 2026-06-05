@@ -1,0 +1,23 @@
+# Build output
+dist/
+src-tauri/target/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Config (optional — 如果想保留用户配置记录则取消注释)
+# src-tauri/config.json
+
+# Node
+node_modules/
+
+# Test scripts
+test-pdf*.mjs

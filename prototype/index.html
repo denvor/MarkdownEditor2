@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Markdown Editor — 产品原型</title>
+<script src="marked.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: background 0.3s, color 0.3s;
+  --zoom: 1;
+}
+
+/* ── Menu Bar ─────────────────────────────── */
+.menubar {
+  display: flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 13px;
+  user-select: none;
+  z-index: 10;
+}
+.menu-item {
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  position: relative;
+}
+.menu-item:hover { background: rgba(128,128,128,0.2); }
+.menu-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%; left: 0;
+  min-width: 180px;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  padding: 4px;
+  z-index: 100;
+}
+.menu-item.active .menu-dropdown { display: block; }
+.dropdown-item {
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+.dropdown-item:hover { background: rgba(128,128,128,0.15); }
+.dropdown-sep {
+  height: 1px;
+  margin: 4px 8px;
+  background: rgba(128,128,128,0.25);
+}
+.shortcut { font-size: 12px; opacity: 0.5; }
+
+/* ── Toolbar ──────────────────────────────── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+.toolbar button {
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+.toolbar button:hover { border-color: rgba(128,128,128,0.3); }
+.toolbar button:active { background: rgba(128,128,128,0.2); }
+.toolbar .sep {
+  width: 1px; height: 20px;
+  margin: 0 4px;
+  background: rgba(128,128,128,0.3);
+}
+
+/* ── Split Panel ──────────────────────────── */
+.main-area {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pane-label {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.6;
+}
+.editor-pane { border-right: 1px solid; }
+.editor-textarea {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 12px 16px;
+  font-family: 'Consolas', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: calc(14px * var(--zoom));
+  line-height: 1.7;
+  tab-size: 4;
+  width: 100%;
+}
+.preview-pane {
+  overflow-y: auto;
+  padding: 12px 20px;
+  line-height: 1.7;
+  font-size: calc(15px * var(--zoom));
+}
+.preview-pane h1 { font-size: 1.8em; margin: 16px 0 8px; border-bottom: 1px solid; padding-bottom: 4px; }
+.preview-pane h2 { font-size: 1.5em; margin: 16px 0 8px; }
+.preview-pane h3 { font-size: 1.25em; margin: 14px 0 6px; }
+.preview-pane h4 { font-size: 1.1em; margin: 12px 0 4px; }
+.preview-pane h5, .preview-pane h6 { font-size: 1em; margin: 10px 0 4px; }
+.preview-pane p { margin: 6px 0; }
+.preview-pane pre { padding: 14px; border-radius: 6px; overflow-x: auto; margin: 10px 0; }
+.preview-pane code { font-family: 'Consolas', monospace; font-size: 0.9em; }
+.preview-pane blockquote {
+  margin: 10px 0; padding: 4px 16px;
+  border-left: 4px solid;
+}
+.preview-pane table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+.preview-pane th, .preview-pane td { border: 1px solid; padding: 8px 12px; text-align: left; }
+.preview-pane img { max-width: 100%; }
+.preview-pane hr { border: none; border-top: 1px solid; margin: 20px 0; }
+.preview-pane ul, .preview-pane ol { padding-left: 24px; margin: 6px 0; }
+
+/* ── Status Bar ───────────────────────────── */
+.statusbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 14px;
+  font-size: 12px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+/* ── Themes ───────────────────────────────── */
+/* Light */
+body.light {
+  --bg: #fff; --fg: #24292e;
+  --menubar: #f0f0f0; --toolbar: #f0f0f0;
+  --status: #e0e0e0; --status-fg: #555; --status-dim: #888;
+  --editor-bg: #fff; --editor-fg: #000;
+  --preview-bg: #fff; --preview-fg: #24292e;
+  --code-bg: #f5f5f5; --border: #ddd;
+  --btn-hover: #e0e0e0;
+}
+/* Dark */
+body.dark {
+  --bg: #1e1e1e; --fg: #d4d4d4;
+  --menubar: #2d2d2d; --toolbar: #2d2d2d;
+  --status: #2d2d2d; --status-fg: #ccc; --status-dim: #999;
+  --editor-bg: #1e1e1e; --editor-fg: #d4d4d4;
+  --preview-bg: #1e1e1e; --preview-fg: #d4d4d4;
+  --code-bg: #2d2d2d; --border: #444;
+  --btn-hover: #3a3a3a;
+}
+/* Solarized Light */
+body.solarized-light {
+  --bg: #fdf6e3; --fg: #657b83;
+  --menubar: #eee8d5; --toolbar: #eee8d5;
+  --status: #eee8d5; --status-fg: #586e75; --status-dim: #839496;
+  --editor-bg: #fdf6e3; --editor-fg: #657b83;
+  --preview-bg: #fdf6e3; --preview-fg: #657b83;
+  --code-bg: #eee8d5; --border: #93a1a1;
+  --btn-hover: #e0dcc7;
+}
+/* Solarized Dark */
+body.solarized-dark {
+  --bg: #002b36; --fg: #839496;
+  --menubar: #073642; --toolbar: #073642;
+  --status: #073642; --status-fg: #586e75; --status-dim: #657b83;
+  --editor-bg: #002b36; --editor-fg: #839496;
+  --preview-bg: #002b36; --preview-fg: #839496;
+  --code-bg: #073642; --border: #586e75;
+  --btn-hover: #0a4452;
+}
+
+body { background: var(--bg); color: var(--fg); }
+.menubar { background: var(--menubar); }
+.menu-dropdown { background: var(--menubar); }
+.toolbar { background: var(--toolbar); }
+.editor-pane { border-color: var(--border); }
+.pane-label { color: var(--status-dim); background: var(--menubar); }
+.editor-textarea { background: var(--editor-bg); color: var(--editor-fg); }
+.preview-pane { background: var(--preview-bg); color: var(--preview-fg); }
+.preview-pane pre, .preview-pane code { background: var(--code-bg); }
+.preview-pane blockquote { border-color: var(--border); color: var(--status-fg); }
+.preview-pane th, .preview-pane td { border-color: var(--border); }
+.preview-pane th { background: var(--code-bg); }
+.preview-pane hr { border-color: var(--border); }
+.preview-pane h1 { border-color: var(--border); }
+.statusbar { background: var(--status); color: var(--status-fg); }
+.status-right { color: var(--status-dim); }
+.toolbar button { background: transparent; color: var(--fg); }
+.statusbar span:first-child::before { content: '📄 '; }
+</style>
+</head>
+<body class="light">
+
+<!-- Menu Bar -->
+<div class="menubar" id="menubar">
+  <div class="menu-item" data-menu="file">File
+    <div class="menu-dropdown">
+      <div class="dropdown-item" data-action="open">Open<span class="shortcut">Ctrl+O</span></div>
+      <div class="dropdown-item" data-action="save">Save<span class="shortcut">Ctrl+S</span></div>
+      <div class="dropdown-item" data-action="saveas">Save As</div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item" data-action="export">Export PDF</div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item" data-action="exit">Exit<span class="shortcut">Alt+F4</span></div>
+    </div>
+  </div>
+  <div class="menu-item" data-menu="edit">Edit
+    <div class="menu-dropdown">
+      <div class="dropdown-item" data-action="undo">Undo<span class="shortcut">Ctrl+Z</span></div>
+      <div class="dropdown-item" data-action="redo">Redo<span class="shortcut">Ctrl+Y</span></div>
+    </div>
+  </div>
+  <div class="menu-item" data-menu="view">View
+    <div class="menu-dropdown">
+      <div class="dropdown-item" data-action="zoom-in">Zoom In<span class="shortcut">Ctrl+=</span></div>
+      <div class="dropdown-item" data-action="zoom-out">Zoom Out<span class="shortcut">Ctrl+-</span></div>
+      <div class="dropdown-item" data-action="zoom-reset">Reset Zoom<span class="shortcut">Ctrl+0</span></div>
+    </div>
+  </div>
+  <div class="menu-item" data-menu="theme">Theme
+    <div class="menu-dropdown" id="themeMenu">
+      <div class="dropdown-item" data-theme="light">Light</div>
+      <div class="dropdown-item" data-theme="dark">Dark</div>
+      <div class="dropdown-item" data-theme="solarized-light">Solarized Light</div>
+      <div class="dropdown-item" data-theme="solarized-dark">Solarized Dark</div>
+    </div>
+  </div>
+  <div class="menu-item" data-menu="help">Help
+    <div class="menu-dropdown">
+      <div class="dropdown-item" data-action="about">About</div>
+    </div>
+  </div>
+</div>
+
+<!-- Toolbar -->
+<div class="toolbar">
+  <button data-insert="# " title="Heading 1">H₁</button>
+  <button data-insert="## " title="Heading 2">H₂</button>
+  <button data-insert="### " title="Heading 3">H₃</button>
+  <button data-insert="#### " title="Heading 4">H₄</button>
+  <button data-insert="##### " title="Heading 5">H₅</button>
+  <button data-insert="###### " title="Heading 6">H₆</button>
+  <span class="sep"></span>
+  <button data-insert="**粗体**" title="Bold">B</button>
+  <button data-insert="*斜体*" title="Italic"><i>I</i></button>
+  <button data-insert="~~删除线~~" title="Strikethrough">S̶</button>
+  <span class="sep"></span>
+  <button data-insert="> " title="Blockquote">❝</button>
+  <button data-insert="- " title="Unordered list">•</button>
+  <button data-insert="1. " title="Ordered list">1.</button>
+  <span class="sep"></span>
+  <button data-insert="[链接](url)" title="Link">🔗</button>
+  <button data-insert="![图片](src)" title="Image">🖼</button>
+  <span class="sep"></span>
+  <button data-insert="`代码`" title="Inline code">&lt;&gt;</button>
+  <button data-insert="&#10;```&#10;代码块&#10;```&#10;" title="Code block">{ }</button>
+  <button data-insert="&#10;| 列1 | 列2 | 列3 |&#10;| --- | --- | --- |&#10;| 内容 | 内容 | 内容 |&#10;" title="Table">⊞</button>
+  <button data-insert="&#10;---&#10;" title="Horizontal rule">—</button>
+</div>
+
+<!-- Main Area -->
+<div class="main-area">
+  <div class="pane editor-pane">
+    <div class="pane-label">Markdown</div>
+    <textarea class="editor-textarea" id="editor" placeholder="在此输入 Markdown 内容…"></textarea>
+  </div>
+  <div class="pane preview-pane" id="preview"></div>
+</div>
+
+<!-- Status Bar -->
+<div class="statusbar">
+  <span id="statusFile">Untitled</span>
+  <span class="status-right"><span id="statusZoom">100%</span>&nbsp;&nbsp;<span id="statusInfo">Ln 1, Col 1</span></span>
+</div>
+
+<script>
+// ── Menu dropdown toggle ────────────────────
+document.getElementById('menubar').addEventListener('click', function(e) {
+  var item = e.target.closest('.menu-item');
+  if (!item) return;
+
+  // Close other menus
+  document.querySelectorAll('.menu-item').forEach(function(m) {
+    if (m !== item) m.classList.remove('active');
+  });
+  item.classList.toggle('active');
+});
+
+// Close menus on outside click
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.menu-item')) {
+    document.querySelectorAll('.menu-item').forEach(function(m) {
+      m.classList.remove('active');
+    });
+  }
+});
+
+// ── Dropdown actions ────────────────────────
+document.querySelectorAll('.dropdown-item').forEach(function(el) {
+  el.addEventListener('click', function(e) {
+    e.stopPropagation();
+    var action = el.dataset.action;
+    var theme = el.dataset.theme;
+
+    if (theme) {
+      document.body.className = theme;
+      document.querySelectorAll('#themeMenu .dropdown-item').forEach(function(t) {
+        t.style.fontWeight = t.dataset.theme === theme ? 'bold' : 'normal';
+      });
+      // Mark current theme
+    } else if (action === 'about') {
+      alert('Markdown Editor 原型\n\n分屏 Markdown 编辑器，支持实时预览、PDF 导出、\n主题切换、View 缩放（Ctrl+= / Ctrl+- / Ctrl+0）。\n\n完整版额外支持：记忆上次文件、Windows 右键关联。\n基于 Python + tkinter + reportlab 构建。');
+    } else if (action === 'export') {
+      alert('导出 PDF…（完整版中通过 reportlab 实现，支持中文）');
+    } else if (action === 'open') {
+      alert('打开文件…（完整版中调用系统文件对话框）');
+    } else if (action === 'save') {
+      alert('保存文件…（完整版中写入磁盘）');
+    } else if (action === 'undo') {
+      document.execCommand('undo');
+    } else if (action === 'redo') {
+      document.execCommand('redo');
+    } else if (action === 'zoom-in') {
+      zoomIn();
+    } else if (action === 'zoom-out') {
+      zoomOut();
+    } else if (action === 'zoom-reset') {
+      zoomReset();
+    }
+
+    el.closest('.menu-item').classList.remove('active');
+  });
+});
+
+// ── Theme: mark active ──────────────────────
+document.querySelector('#themeMenu .dropdown-item[data-theme="light"]').style.fontWeight = 'bold';
+
+// ── Toolbar buttons ─────────────────────────
+var editor = document.getElementById('editor');
+document.querySelectorAll('.toolbar button').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var text = btn.dataset.insert.replace(/&#10;/g, '\n');
+    var start = editor.selectionStart;
+    var end = editor.selectionEnd;
+    var before = editor.value.substring(0, start);
+    var after = editor.value.substring(end);
+
+    // Handle wrapped selection (bold/italic/strikethrough)
+    if (['**粗体**','*斜体*','~~删除线~~','`代码`'].includes(btn.dataset.insert)) {
+      var marker = text.replace(/[^\*~`]/g, '');
+      var content = start === end ? text.replace(marker, '') : editor.value.substring(start, end);
+      editor.value = before + marker[0] + content + marker[marker.length-1] + after;
+      var newPos = start + marker.length/2 + content.length;
+      editor.focus();
+      editor.setSelectionRange(newPos, newPos);
+    } else {
+      editor.value = before + text + after;
+      editor.focus();
+      var cursor = start + text.length;
+      editor.setSelectionRange(cursor, cursor);
+    }
+    updatePreview();
+    updateStatus();
+  });
+});
+
+// ── Live preview ────────────────────────────
+function updatePreview() {
+  var md = editor.value;
+  var preview = document.getElementById('preview');
+  if (md.trim()) {
+    marked.setOptions({ breaks: true });
+    preview.innerHTML = marked.parse(md);
+  } else {
+    preview.innerHTML = '<p style="opacity:0.4;font-style:italic">预览区域 — 在左侧输入 Markdown 即可实时显示</p>';
+  }
+}
+
+var debounceTimer;
+editor.addEventListener('input', function() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(updatePreview, 300);
+  updateStatus();
+});
+
+// ── Status bar ──────────────────────────────
+function updateStatus() {
+  var pos = editor.selectionStart;
+  var text = editor.value.substring(0, pos);
+  var lines = text.split('\n');
+  var ln = lines.length;
+  var col = lines[lines.length - 1].length + 1;
+  document.getElementById('statusInfo').textContent = 'Ln ' + ln + ', Col ' + col;
+
+  var lineText = editor.value.split('\n')[ln - 1] || '';
+  var extra = '';
+  if (/^#{1,6}\s/.test(lineText)) {
+    extra = '  |  Heading ' + lineText.match(/^(#+)/)[1].length;
+  } else if (/^[-*_]{3,}\s*$/.test(lineText)) {
+    extra = '  |  Horizontal rule';
+  } else if (/^>/.test(lineText)) {
+    extra = '  |  Blockquote';
+  } else if (/^[-*]\s/.test(lineText) || /^\d+\.\s/.test(lineText)) {
+    extra = '  |  List item';
+  } else if (/^```/.test(lineText)) {
+    extra = '  |  Code block';
+  } else if (/^\|/.test(lineText)) {
+    extra = '  |  Table';
+  }
+  document.getElementById('statusInfo').textContent = 'Ln ' + ln + ', Col ' + col + extra;
+  document.getElementById('statusFile').textContent = 'prototype_demo.md';
+}
+
+// ── Keyboard shortcuts ──────────────────────
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey && e.key === 's') { e.preventDefault(); alert('保存…（原型演示）'); }
+  if (e.ctrlKey && e.key === 'o') { e.preventDefault(); alert('打开…（原型演示）'); }
+  if (e.ctrlKey && (e.key === '=' || e.key === '+')) { e.preventDefault(); zoomIn(); }
+  if (e.ctrlKey && e.key === '-') { e.preventDefault(); zoomOut(); }
+  if (e.ctrlKey && e.key === '0') { e.preventDefault(); zoomReset(); }
+});
+
+// ── Zoom ────────────────────────────────────
+var ZOOM_STEP = 0.1;
+var ZOOM_MIN = 0.5;
+var ZOOM_MAX = 2.0;
+var ZOOM_KEY = 'md-editor-zoom';
+
+function getZoom() {
+  var saved = localStorage.getItem(ZOOM_KEY);
+  return saved ? parseFloat(saved) : 1.0;
+}
+
+function saveZoom(level) {
+  localStorage.setItem(ZOOM_KEY, level.toFixed(1));
+}
+
+function applyZoom(level) {
+  document.body.style.setProperty('--zoom', level);
+  document.getElementById('statusZoom').textContent = Math.round(level * 100) + '%';
+}
+
+function zoomIn() {
+  var level = Math.min(ZOOM_MAX, getZoom() + ZOOM_STEP);
+  saveZoom(level);
+  applyZoom(level);
+}
+
+function zoomOut() {
+  var level = Math.max(ZOOM_MIN, getZoom() - ZOOM_STEP);
+  saveZoom(level);
+  applyZoom(level);
+}
+
+function zoomReset() {
+  saveZoom(1.0);
+  applyZoom(1.0);
+}
+
+// Apply saved zoom on load
+applyZoom(getZoom());
+
+// ── Load demo content ───────────────────────
+var demoContent = [
+  '# Markdown Editor 产品原型',
+  '',
+  '欢迎使用 **Markdown Editor**！这是一个分屏编辑器原型，用于展示产品的 UI 和交互。',
+  '',
+  '## 功能演示',
+  '',
+  '### 文本格式',
+  '',
+  '支持 **粗体**、*斜体*、~~删除线~~、`行内代码`。',
+  '',
+  '### 代码块',
+  '',
+  '```python',
+  'def hello():',
+  '    print("Hello, Markdown!")',
+  '```',
+  '',
+  '### 引用',
+  '',
+  '> 好的代码就是它最好的文档。',
+  '> — *Steve McConnell*',
+  '',
+  '### 列表',
+  '',
+  '- 无序列表项 1',
+  '- 无序列表项 2',
+  '  - 嵌套子项',
+  '',
+  '1. 有序列表第一项',
+  '2. 有序列表第二项',
+  '',
+  '### 表格',
+  '',
+  '| 功能 | 状态 | 说明 |',
+  '| --- | --- | --- |',
+  '| 实时预览 | ✅ | 输入即渲染 |',
+  '| 主题切换 | ✅ | 4 套配色 |',
+  '| View 缩放 | ✅ | Ctrl+= / Ctrl+- / Ctrl+0 |',
+  '| 记忆文件 | ✅ | 重启自动恢复 |',
+  '| PDF 导出 | ✅ | 支持中文 |',
+  '| 文件关联 | ✅ | 右键打开 |',
+  '',
+  '### 链接与图片',
+  '',
+  '[项目主页](https://github.com)',
+  '',
+  '---',
+  '',
+  '## 缩放与主题',
+  '',
+  '**View 菜单**提供页面缩放功能：',
+  '',
+  '- `Ctrl+=` 放大（最高 200%）',
+  '- `Ctrl+-` 缩小（最低 50%）',
+  '- `Ctrl+0` 恢复 100%',
+  '',
+  '> 💡 缩放比例会自动保存到浏览器 localStorage，刷新页面后保持。',
+  '',
+  '点击菜单栏 **Theme** 可切换 4 套主题配色：',
+  '',
+  '1. **Light** — 明亮白底',
+  '2. **Dark** — 深色护眼',
+  '3. **Solarized Light** — 暖黄底色',
+  '4. **Solarized Dark** — 蓝黑配色',
+  '',
+  '> 💡 提示：在原型中试试切换主题，所有面板、工具栏、状态栏都会同步变化。',
+  '',
+  '---',
+  '',
+  '*此原型用于展示产品界面和交互，完整功能见实际 Python 应用。*',
+].join('\n');
+
+editor.value = demoContent;
+updatePreview();
+updateStatus();
+</script>
+</body>
+</html>
