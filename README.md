@@ -1,6 +1,15 @@
 # Markdown Editor
 
+<div align="center">
+
+[![GitHub](https://img.shields.io/badge/GitHub-denvor/MarkdownEditor2-181717?logo=github)](https://github.com/denvor/MarkdownEditor2)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
+
 一个基于 Tauri 2.x 构建的现代分屏 Markdown 编辑器，左侧编辑、右侧实时预览，支持 PDF 导出和多主题切换。
+
+> 替代原有 Python + tkinter 版本，界面更现代，预览更流畅。
 
 ## 功能
 
