@@ -12,12 +12,28 @@ import * as Shortcuts from './shortcuts.js';
 import * as FileOps from './file-ops.js';
 import { marked } from 'marked';
 
+// ── 未保存提示 ──────────────────────────────
+async function promptSaveIfModified() {
+  if (!FileOps.isModified()) return 'proceed';
+  const ok = confirm('当前文件尚未保存。\n\n点击「确定」保存后继续。\n点击「取消」放弃更改。');
+  if (ok) {
+    await fileActions.save();
+  }
+  return 'proceed';
+}
+
 // ── Tauri 文件操作 ─────────────────────────
 let fileActions = null;
 
 function initTauriActions() {
     return {
+      async newFile() {
+        if (await promptSaveIfModified() === 'cancelled') return;
+        FileOps.newFile();
+        await Config.set('last_file', null);
+      },
       async open() {
+        if (await promptSaveIfModified() === 'cancelled') return;
         const result = await invoke('open_file_dialog');
         if (result) {
           FileOps.loadContent(result);
@@ -28,6 +44,7 @@ function initTauriActions() {
         const file = FileOps.getCurrentFile();
         if (file) {
           await invoke('write_file', { path: file, content: Editor.getContent() });
+          FileOps.markSaved();
           await Config.set('last_file', file);
         } else {
           await this.saveAs();
@@ -43,6 +60,7 @@ function initTauriActions() {
         });
         if (path) {
           FileOps.setCurrentFile(path);
+          FileOps.markSaved();
           await Config.set('last_file', path);
         }
       },
@@ -69,7 +87,11 @@ function initTauriActions() {
         }
       },
       async exitApp() {
-        try { await onBeforeUnload(); } catch {}
+        if (FileOps.isModified()) {
+          const ok = confirm('当前文件尚未保存。\n\n点击「确定」保存后退出。\n点击「取消」放弃更改直接退出。');
+          if (ok) await fileActions.save();
+        }
+        await onBeforeUnload();
         await invoke('exit_app');
       },
       showAbout() {
@@ -80,7 +102,13 @@ function initTauriActions() {
           'Built with Tauri + Web technologies.',
         );
       },
+      async closeFile() {
+        if (await promptSaveIfModified() === 'cancelled') return;
+        FileOps.newFile();
+        await Config.set('last_file', null);
+      },
       async loadPath(filePath) {
+        if (await promptSaveIfModified() === 'cancelled') return;
         try {
           const result = await invoke('read_file_at_path', { path: filePath });
           FileOps.loadContent(result);
@@ -179,7 +207,9 @@ async function boot() {
 
   // 初始化菜单
   Menu.init({
+    newFile: () => fileActions.newFile(),
     openFile: () => fileActions.open(),
+    closeFile: () => fileActions.closeFile(),
     saveFile: () => fileActions.save(),
     saveFileAs: () => fileActions.saveAs(),
     exportPdf: () => fileActions.exportPdf(),
@@ -189,6 +219,7 @@ async function boot() {
 
   // 初始化快捷键
   Shortcuts.init({
+    new: () => fileActions.newFile(),
     open: () => fileActions.open(),
     save: () => fileActions.save(),
   });
@@ -196,14 +227,25 @@ async function boot() {
   // 初始化工具栏
   Toolbar.init();
 
-  // 编辑器输入 → 预览防抖
+  // 编辑器输入 → 预览防抖 + 标题标记更新
   Editor.onInput(() => {
     Preview.scheduleUpdate(() => Editor.getContent());
     StatusBar.update();
+    FileOps.refreshTitle();
   });
 
   // 光标移动 → 状态栏更新
   Editor.onCursorMove(() => StatusBar.update());
+
+  // 同步滚动：编辑器滚动 → 预览按比例跟随
+  const editorEl = document.getElementById('editor');
+  const previewEl = document.getElementById('preview');
+  editorEl.addEventListener('scroll', () => {
+    const maxEditor = editorEl.scrollHeight - editorEl.clientHeight;
+    const maxPreview = previewEl.scrollHeight - previewEl.clientHeight;
+    if (maxEditor <= 0 || maxPreview <= 0) return;
+    previewEl.scrollTop = (editorEl.scrollTop / maxEditor) * maxPreview;
+  });
 
   // 加载内容：优先级 CLI 参数 > last_file > demo
   let loaded = false;
@@ -224,16 +266,23 @@ async function boot() {
   if (!loaded) {
     Editor.setContent(DEMO_CONTENT);
     Preview.update(DEMO_CONTENT);
+    FileOps.markSaved();
   }
 
-  // 监听第二实例传来的文件路径
+  // 监听第二实例传来的文件路径（双击 .md 文件）
   listen('second-instance-file', (event) => {
     fileActions.loadPath(event.payload);
   });
 
   StatusBar.update();
 
-  // 关闭前保存配置
+  // 关闭前保存配置 + 未保存提示
+  window.addEventListener('beforeunload', (e) => {
+    if (FileOps.isModified()) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
   window.addEventListener('beforeunload', onBeforeUnload);
 }
 

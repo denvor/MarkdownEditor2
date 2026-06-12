@@ -30,8 +30,14 @@ export function init(actions) {
         }
 
       switch (action) {
+        case 'new':
+          if (actions.newFile) await actions.newFile();
+          break;
         case 'open':
           if (actions.openFile) await actions.openFile();
+          break;
+        case 'close':
+          if (actions.closeFile) await actions.closeFile();
           break;
         case 'save':
           if (actions.saveFile) await actions.saveFile();

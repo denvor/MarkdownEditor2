@@ -8,6 +8,10 @@ export function init(fileActions) {
       e.preventDefault();
       if (fileActions.save) fileActions.save();
     }
+    if (ctrl && e.key === 'n') {
+      e.preventDefault();
+      if (fileActions.new) fileActions.new();
+    }
     if (ctrl && e.key === 'o') {
       e.preventDefault();
       if (fileActions.open) fileActions.open();
