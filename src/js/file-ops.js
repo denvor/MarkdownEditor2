@@ -37,7 +37,7 @@ export function loadContent(fileData) {
   setContent(fileData.content);
   savedContent = fileData.content;
   setCurrentFile(fileData.path);
-  Preview.update(fileData.content);
+  Preview.update(fileData.content).catch(() => {});
   StatusBar.update();
 }
 

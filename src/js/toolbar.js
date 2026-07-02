@@ -30,7 +30,7 @@ export function init() {
         insertAtCursor(text);
       }
 
-      Preview.update(getContent());
+      Preview.update(getContent()).catch(() => {});
       StatusBar.update();
     });
   });

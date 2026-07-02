@@ -1,7 +1,9 @@
 #![allow(non_snake_case)]
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Emitter;
 use tauri::Manager;
 
@@ -80,6 +82,27 @@ async fn read_file_at_path(path: String) -> Result<FileResult, String> {
 fn get_cli_file() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     args.get(1).cloned()
+}
+
+#[tauri::command]
+fn resolve_image(path: String) -> Result<String, String> {
+    let data = fs::read(&path).map_err(|e| format!("读取图片失败: {e}"))?;
+    let ext = Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        _ => "image/png",
+    };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+    Ok(format!("data:{mime};base64,{b64}"))
 }
 
 #[tauri::command]
@@ -280,13 +303,29 @@ async fn export_pdf(
         do_save_config(&app, &new_cfg)?;
     }
 
-    // 步骤2：写临时 HTML 文件
+    // 步骤2：写临时 HTML 文件（唯一标签避免并发竞态）
     let temp_dir = std::env::temp_dir().join("md-editor-pdf");
     fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
-    let html_path = temp_dir.join("export.html");
+    static PDF_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let pdf_label = format!("pdf-export-{}", PDF_COUNTER.fetch_add(1, Ordering::Relaxed));
+    let html_path = temp_dir.join(format!("{}.html", pdf_label));
+
+    // 从实际保存路径提取文档标题（转义 & 避免 HTML entity 歧义）
+    // Windows 文件名允许 &，不允许 < > "，故只需处理 &
+    let doc_title = dest_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| {
+            if s.contains('&') {
+                s.replace('&', "&amp;")
+            } else {
+                s.to_owned()
+            }
+        })
+        .unwrap_or_else(|| "Untitled".to_owned());
 
     let full_html = format!(
-        "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n\
+        "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n\
 <style>\n\
 * {{ margin:0; padding:0; box-sizing:border-box; }}\n\
 body {{ font-family:'Microsoft YaHei',sans-serif; font-size:10.5pt; line-height:1.6; color:#24292e; padding:56.7pt; }}\n\
@@ -310,19 +349,18 @@ em {{ font-style:italic; }}\n\
 del {{ text-decoration:line-through; }}\n\
 img {{ max-width:100%; }}\n\
 </style>\n</head>\n<body>\n{}\n</body>\n</html>",
-        html
+        doc_title, html
     );
     fs::write(&html_path, &full_html).map_err(|e| e.to_string())?;
 
     // 步骤3：创建不可见 WebView 加载 HTML
-    let file_url = format!(
-        "file:///{}",
-        html_path.to_string_lossy().replace('\\', "/")
-    );
     let window = WebviewWindowBuilder::new(
         &app,
-        "pdf-export",
-        WebviewUrl::External(url::Url::parse(&file_url).map_err(|e| e.to_string())?),
+        &pdf_label,
+        WebviewUrl::External(
+            url::Url::from_file_path(&html_path)
+                .expect("temp_dir 返回的是绝对路径，from_file_path 不会失败"),
+        ),
     )
     .visible(false)
     .build()
@@ -479,6 +517,7 @@ pub fn run() {
             save_binary_file_dialog,
             read_file_at_path,
             get_cli_file,
+            resolve_image,
             exit_app,
             export_pdf,
             set_window_theme,
