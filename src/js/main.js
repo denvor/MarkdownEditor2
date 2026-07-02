@@ -10,6 +10,7 @@ import * as Menu from './menu.js';
 import * as StatusBar from './statusbar.js';
 import * as Shortcuts from './shortcuts.js';
 import * as FileOps from './file-ops.js';
+import { resolveHtmlImages } from './image-loader.js';
 import { marked } from 'marked';
 
 // ── 未保存提示 ──────────────────────────────
@@ -71,9 +72,14 @@ function initTauriActions() {
           return;
         }
         const name = FileOps.getCurrentFile()
-          ? FileOps.getCurrentFile().replace(/\.\w+$/, '.pdf')
+          ? FileOps.getCurrentFile().split(/[/\\]/).pop().replace(/\.\w+$/, '.pdf')
           : 'output.pdf';
-        const html = marked.parse(mdText);
+        const rawHtml = marked.parse(mdText);
+
+        // 解析相对路径图片为 data URI
+        const currentFile = FileOps.getCurrentFile();
+        const baseDir = currentFile ? currentFile.replace(/[/\\][^/\\]+$/, '') : null;
+        const html = baseDir ? await resolveHtmlImages(rawHtml, baseDir) : rawHtml;
 
         const overlay = document.getElementById('loadingOverlay');
         overlay.style.display = 'flex';
@@ -237,14 +243,35 @@ async function boot() {
   // 光标移动 → 状态栏更新
   Editor.onCursorMove(() => StatusBar.update());
 
-  // 同步滚动：编辑器滚动 → 预览按比例跟随
+  // 同步滚动：左右任意一边滚动时，另一边按比例跟随
   const editorEl = document.getElementById('editor');
   const previewEl = document.getElementById('preview');
+  let isSyncing = false;
+
   editorEl.addEventListener('scroll', () => {
-    const maxEditor = editorEl.scrollHeight - editorEl.clientHeight;
-    const maxPreview = previewEl.scrollHeight - previewEl.clientHeight;
-    if (maxEditor <= 0 || maxPreview <= 0) return;
-    previewEl.scrollTop = (editorEl.scrollTop / maxEditor) * maxPreview;
+    if (isSyncing) return;
+    isSyncing = true;
+    try {
+      const maxEditor = editorEl.scrollHeight - editorEl.clientHeight;
+      const maxPreview = previewEl.scrollHeight - previewEl.clientHeight;
+      if (maxEditor <= 0 || maxPreview <= 0) return;
+      previewEl.scrollTop = (editorEl.scrollTop / maxEditor) * maxPreview;
+    } finally {
+      isSyncing = false;
+    }
+  });
+
+  previewEl.addEventListener('scroll', () => {
+    if (isSyncing) return;
+    isSyncing = true;
+    try {
+      const maxEditor = editorEl.scrollHeight - editorEl.clientHeight;
+      const maxPreview = previewEl.scrollHeight - previewEl.clientHeight;
+      if (maxEditor <= 0 || maxPreview <= 0) return;
+      editorEl.scrollTop = (previewEl.scrollTop / maxPreview) * maxEditor;
+    } finally {
+      isSyncing = false;
+    }
   });
 
   // 加载内容：优先级 CLI 参数 > last_file > demo
