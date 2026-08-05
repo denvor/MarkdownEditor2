@@ -86,7 +86,7 @@ body {
   min-height: 0;
 }
 .pane {
-  flex: 1;
+  flex: 1 1 50%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -99,7 +99,26 @@ body {
   letter-spacing: 0.5px;
   opacity: 0.6;
 }
-.editor-pane { border-right: 1px solid; }
+.divider {
+  width: 4px;
+  flex-shrink: 0;
+  background: var(--border);
+  cursor: col-resize;
+  user-select: none;
+  transition: background 0.15s;
+}
+.divider:hover {
+  background: var(--fg);
+  opacity: 0.4;
+}
+.divider.dragging {
+  background: var(--fg);
+  opacity: 0.6;
+}
+body.dragging {
+  user-select: none;
+  cursor: col-resize;
+}
 .editor-textarea {
   flex: 1;
   border: none;

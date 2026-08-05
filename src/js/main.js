@@ -190,6 +190,43 @@ const DEMO_CONTENT = [
   '*此编辑器基于 Tauri + Web 技术构建，替代原有 Python + tkinter 版本。*',
 ].join('\n');
 
+// ── 分隔条拖动调整窗格宽度 ──────────────
+function initDivider() {
+  const divider = document.getElementById('divider');
+  const editorPane = document.querySelector('.editor-pane');
+  const previewPane = document.querySelector('.preview-pane');
+  const mainArea = document.querySelector('.main-area');
+  const MIN_PX = 200;
+
+  let isDragging = false;
+
+  divider.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    isDragging = true;
+    divider.classList.add('dragging');
+    document.body.classList.add('dragging');
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+
+    const rect = mainArea.getBoundingClientRect();
+    const percent = ((e.clientX - rect.left) / rect.width) * 100;
+    const minPercent = (MIN_PX / rect.width) * 100;
+    const clamped = Math.min(Math.max(percent, minPercent), 100 - minPercent);
+
+    editorPane.style.flexBasis = clamped + '%';
+    previewPane.style.flexBasis = (100 - clamped) + '%';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!isDragging) return;
+    isDragging = false;
+    divider.classList.remove('dragging');
+    document.body.classList.remove('dragging');
+  });
+}
+
 // ── 关闭前保存配置 ────────────────────────
 async function onBeforeUnload() {
   await Config.setMultiple({
@@ -300,6 +337,9 @@ async function boot() {
   listen('second-instance-file', (event) => {
     fileActions.loadPath(event.payload);
   });
+
+  // 初始化分隔条拖动
+  initDivider();
 
   StatusBar.update();
 
