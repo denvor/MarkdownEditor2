@@ -77,8 +77,7 @@ function initTauriActions() {
         const rawHtml = marked.parse(mdText);
 
         // 解析相对路径图片为 data URI
-        const currentFile = FileOps.getCurrentFile();
-        const baseDir = currentFile ? currentFile.replace(/[/\\][^/\\]+$/, '') : null;
+        const baseDir = FileOps.getBaseDir();
         const html = baseDir ? await resolveHtmlImages(rawHtml, baseDir) : rawHtml;
 
         const overlay = document.getElementById('loadingOverlay');
@@ -200,14 +199,24 @@ function initDivider() {
 
   let isDragging = false;
 
-  divider.addEventListener('mousedown', (e) => {
+  const endDrag = () => {
+    if (!isDragging) return;
+    isDragging = false;
+    divider.classList.remove('dragging');
+    document.body.classList.remove('dragging');
+  };
+
+  // 使用 Pointer Events + setPointerCapture：即使鼠标在窗口外松开，
+  // pointerup 也会派发到分隔条上，避免 isDragging 卡死
+  divider.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     isDragging = true;
     divider.classList.add('dragging');
     document.body.classList.add('dragging');
+    divider.setPointerCapture(e.pointerId);
   });
 
-  document.addEventListener('mousemove', (e) => {
+  divider.addEventListener('pointermove', (e) => {
     if (!isDragging) return;
 
     const rect = mainArea.getBoundingClientRect();
@@ -219,12 +228,8 @@ function initDivider() {
     previewPane.style.flexBasis = (100 - clamped) + '%';
   });
 
-  document.addEventListener('mouseup', () => {
-    if (!isDragging) return;
-    isDragging = false;
-    divider.classList.remove('dragging');
-    document.body.classList.remove('dragging');
-  });
+  divider.addEventListener('pointerup', endDrag);
+  divider.addEventListener('pointercancel', endDrag);
 }
 
 // ── 关闭前保存配置 ────────────────────────
@@ -280,35 +285,48 @@ async function boot() {
   // 光标移动 → 状态栏更新
   Editor.onCursorMove(() => StatusBar.update());
 
-  // 同步滚动：左右任意一边滚动时，另一边按比例跟随
+  // 同步滚动：左右任意一边滚动时，另一边按比例跟随。
+  // scroll 事件异步派发，isSyncing 标志在事件到达前就被清除，无法阻止反馈回路。
+  // 改为记录程序化设置的 scrollTop，对侧事件到达时对比位置判断是否"来自本侧"。
   const editorEl = document.getElementById('editor');
   const previewEl = document.getElementById('preview');
-  let isSyncing = false;
+  let lastEditorSet = null;
+  let lastPreviewSet = null;
+
+  const scrollEditorToPreview = () => {
+    const maxEditor = editorEl.scrollHeight - editorEl.clientHeight;
+    const maxPreview = previewEl.scrollHeight - previewEl.clientHeight;
+    if (maxEditor <= 0 || maxPreview <= 0) return;
+    const target = (editorEl.scrollTop / maxEditor) * maxPreview;
+    lastPreviewSet = target;
+    previewEl.scrollTop = target;
+  };
+  const scrollPreviewToEditor = () => {
+    const maxEditor = editorEl.scrollHeight - editorEl.clientHeight;
+    const maxPreview = previewEl.scrollHeight - previewEl.clientHeight;
+    if (maxEditor <= 0 || maxPreview <= 0) return;
+    const target = (previewEl.scrollTop / maxPreview) * maxEditor;
+    lastEditorSet = target;
+    editorEl.scrollTop = target;
+  };
 
   editorEl.addEventListener('scroll', () => {
-    if (isSyncing) return;
-    isSyncing = true;
-    try {
-      const maxEditor = editorEl.scrollHeight - editorEl.clientHeight;
-      const maxPreview = previewEl.scrollHeight - previewEl.clientHeight;
-      if (maxEditor <= 0 || maxPreview <= 0) return;
-      previewEl.scrollTop = (editorEl.scrollTop / maxEditor) * maxPreview;
-    } finally {
-      isSyncing = false;
+    // 若该位置由本侧程序化设置触发，直接放行（消费标记，不反向同步）
+    if (lastEditorSet !== null) {
+      const ours = Math.abs(editorEl.scrollTop - lastEditorSet) < 1;
+      lastEditorSet = null;
+      if (ours) return;
     }
+    scrollEditorToPreview();
   });
 
   previewEl.addEventListener('scroll', () => {
-    if (isSyncing) return;
-    isSyncing = true;
-    try {
-      const maxEditor = editorEl.scrollHeight - editorEl.clientHeight;
-      const maxPreview = previewEl.scrollHeight - previewEl.clientHeight;
-      if (maxEditor <= 0 || maxPreview <= 0) return;
-      editorEl.scrollTop = (previewEl.scrollTop / maxPreview) * maxEditor;
-    } finally {
-      isSyncing = false;
+    if (lastPreviewSet !== null) {
+      const ours = Math.abs(previewEl.scrollTop - lastPreviewSet) < 1;
+      lastPreviewSet = null;
+      if (ours) return;
     }
+    scrollPreviewToEditor();
   });
 
   // 加载内容：优先级 CLI 参数 > last_file > demo

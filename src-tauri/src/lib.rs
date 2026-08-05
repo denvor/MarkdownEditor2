@@ -86,12 +86,18 @@ fn get_cli_file() -> Option<String> {
 
 #[tauri::command]
 fn resolve_image(path: String) -> Result<String, String> {
-    let data = fs::read(&path).map_err(|e| format!("读取图片失败: {e}"))?;
+    // 仅允许读取常见图片扩展名，防止该命令被用作任意文件读取原语
     let ext = Path::new(&path)
         .extension()
         .and_then(|e| e.to_str())
-        .unwrap_or("png")
+        .unwrap_or("")
         .to_lowercase();
+    const ALLOWED_EXT: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+    if !ALLOWED_EXT.contains(&ext.as_str()) {
+        return Err(format!("仅支持读取图片文件，拒绝访问: {ext}"));
+    }
+
+    let data = fs::read(&path).map_err(|e| format!("读取图片失败: {e}"))?;
     let mime = match ext.as_str() {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
@@ -354,17 +360,18 @@ img {{ max-width:100%; }}\n\
     fs::write(&html_path, &full_html).map_err(|e| e.to_string())?;
 
     // 步骤3：创建不可见 WebView 加载 HTML
-    let window = WebviewWindowBuilder::new(
-        &app,
-        &pdf_label,
-        WebviewUrl::External(
-            url::Url::from_file_path(&html_path)
-                .expect("temp_dir 返回的是绝对路径，from_file_path 不会失败"),
-        ),
-    )
-    .visible(false)
-    .build()
-    .map_err(|e| e.to_string())?;
+    let file_url = url::Url::from_file_path(&html_path).map_err(|_| {
+        // 无法表示成 file URL（如 TEMP 被重定向到 UNC 网络路径），转为可报错而非 panic
+        let _ = fs::remove_file(&html_path);
+        format!("无法将临时路径转换为 file URL: {}", html_path.display())
+    })?;
+    let window = WebviewWindowBuilder::new(&app, &pdf_label, WebviewUrl::External(file_url))
+        .visible(false)
+        .build()
+        .map_err(|e| {
+            let _ = fs::remove_file(&html_path); // 建窗失败也清理临时文件
+            e.to_string()
+        })?;
 
     // 等待渲染完成
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -374,57 +381,56 @@ img {{ max-width:100%; }}\n\
     let (print_tx, print_rx) = mpsc::channel::<Result<(), String>>();
     let setup_tx = print_tx.clone();
 
-    window
-        .with_webview(move |webview| {
-            let result = (|| -> Result<(), String> {
-                unsafe {
-                    let controller = webview.controller();
-                    let core = controller
-                        .CoreWebView2()
-                        .map_err(|e| format!("CoreWebView2: {e}"))?;
-                    let wv: ICoreWebView2_7 = core
-                        .cast::<ICoreWebView2_7>()
-                        .map_err(|e| format!("cast ICoreWebView2_7: {e}"))?;
+    let result: Result<(), String> = match window.with_webview(move |webview| {
+        let result = (|| -> Result<(), String> {
+            unsafe {
+                let controller = webview.controller();
+                let core = controller
+                    .CoreWebView2()
+                    .map_err(|e| format!("CoreWebView2: {e}"))?;
+                let wv: ICoreWebView2_7 = core
+                    .cast::<ICoreWebView2_7>()
+                    .map_err(|e| format!("cast ICoreWebView2_7: {e}"))?;
 
-                    let pdf_hstring = HSTRING::from(dest_for_com.as_str());
-                    let settings: Option<&ICoreWebView2PrintSettings> = None;
+                let pdf_hstring = HSTRING::from(dest_for_com.as_str());
+                let settings: Option<&ICoreWebView2PrintSettings> = None;
 
-                    let handler = PrintToPdfCompletedHandler::create(Box::new(
-                        move |result: windows::core::Result<()>,
-                              is_success: bool| {
-                            let _ = print_tx.send(
-                                if result.is_ok() && is_success {
-                                    Ok(())
-                                } else {
-                                    Err("PrintToPdf reported failure".to_string())
-                                },
-                            );
-                            Ok(())
-                        },
-                    ));
+                let handler = PrintToPdfCompletedHandler::create(Box::new(
+                    move |result: windows::core::Result<()>,
+                          is_success: bool| {
+                        let _ = print_tx.send(
+                            if result.is_ok() && is_success {
+                                Ok(())
+                            } else {
+                                Err("PrintToPdf reported failure".to_string())
+                            },
+                        );
+                        Ok(())
+                    },
+                ));
 
-                    wv.PrintToPdf(&pdf_hstring, settings, &handler)
-                        .map_err(|e| format!("PrintToPdf call: {e}"))?;
+                wv.PrintToPdf(&pdf_hstring, settings, &handler)
+                    .map_err(|e| format!("PrintToPdf call: {e}"))?;
 
-                    Ok(())
-                }
-            })();
-            if let Err(e) = result {
-                let _ = setup_tx.send(Err(e));
+                Ok(())
             }
-        })
-        .map_err(|e| e.to_string())?;
+        })();
+        if let Err(e) = result {
+            let _ = setup_tx.send(Err(e));
+        }
+    }) {
+        Err(e) => Err(e.to_string()),
+        Ok(()) => print_rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .map_err(|e| format!("PrintToPdf timeout: {e}"))
+            .and_then(|r| r),
+    };
 
-    // 在非主线程等待 PrintToPdf 完成
-    let result = print_rx
-        .recv_timeout(std::time::Duration::from_secs(30))
-        .map_err(|e| format!("PrintToPdf timeout: {e}"));
-
-    // 无论成功还是超时，都清理临时文件和隐藏窗口
+    // 无论成功、失败还是超时，都清理临时文件和隐藏窗口
     let _ = fs::remove_file(&html_path);
     let _ = window.close();
 
-    result??;
+    result?;
 
     Ok(Some(dest))
 }

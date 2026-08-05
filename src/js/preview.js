@@ -16,8 +16,7 @@ export async function update(mdText) {
     const rawHtml = marked.parse(mdText);
 
     // 获取当前文件目录作为图片基准路径
-    const currentFile = FileOps.getCurrentFile();
-    const baseDir = currentFile ? currentFile.replace(/[/\\][^/\\]+$/, '') : null;
+    const baseDir = FileOps.getBaseDir();
 
     // 解析相对路径图片为 data URI
     const html = baseDir ? await resolveHtmlImages(rawHtml, baseDir) : rawHtml;
@@ -33,6 +32,7 @@ export async function update(mdText) {
 
 export function scheduleUpdate(getContentFn) {
   clearTimeout(debounceTimer);
+  updateGen++; // 使在途的旧更新失效，防止慢解析写回过期内容
   debounceTimer = setTimeout(() => {
     update(getContentFn()).catch(() => {});
   }, DEBOUNCE_MS);

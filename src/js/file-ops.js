@@ -1,6 +1,7 @@
 import { getContent, setContent } from './editor.js';
 import * as Preview from './preview.js';
 import * as StatusBar from './statusbar.js';
+import { clearImageCache } from './image-loader.js';
 
 let currentFile = null;
 let savedContent = '';   // 最后保存/打开时的内容快照
@@ -13,6 +14,11 @@ export function setCurrentFile(path) {
   currentFile = path;
   updateTitle();
   StatusBar.update();
+}
+
+/** 当前文件所在目录（相对路径图片的基准路径） */
+export function getBaseDir() {
+  return currentFile ? currentFile.replace(/[/\\][^/\\]+$/, '') : null;
 }
 
 /** 当前内容与保存的快照是否不同 */
@@ -34,6 +40,7 @@ function updateTitle() {
 }
 
 export function loadContent(fileData) {
+  clearImageCache(); // 打开新文件时清空图片缓存，避免磁盘图片更新后仍显示旧图
   setContent(fileData.content);
   savedContent = fileData.content;
   setCurrentFile(fileData.path);
