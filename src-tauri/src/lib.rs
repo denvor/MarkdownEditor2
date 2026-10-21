@@ -3,9 +3,14 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::Emitter;
 use tauri::Manager;
+
+/// 是否允许真正关闭主窗口。
+/// 前端完成「保存 / 不保存 / 取消」确认后由 exit_app 置位；
+/// 未置位时 CloseRequested 会阻止关闭，避免未保存内容被静默丢弃（点 X / Alt+F4）。
+static ALLOW_CLOSE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Config {
@@ -14,9 +19,21 @@ pub struct Config {
     pub last_dir: Option<String>,
     pub last_file: Option<String>,
     pub window_state: Option<String>,
+    /// 编辑区宽度百分比（分隔条位置），重启后恢复
+    pub pane_ratio: Option<f64>,
 }
 
+/// 配置文件位置：exe 自身目录下存在 config.json 时优先使用它（便携模式，读写同地），
+/// 否则回退到系统应用配置目录（Windows 下为 %APPDATA%\com.md-editor.app\config.json）。
 fn config_path(app: &tauri::AppHandle) -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let local = dir.join("config.json");
+            if local.exists() {
+                return local;
+            }
+        }
+    }
     app.path()
         .app_config_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
@@ -84,31 +101,72 @@ fn get_cli_file() -> Option<String> {
     args.get(1).cloned()
 }
 
-#[tauri::command]
-fn resolve_image(path: String) -> Result<String, String> {
-    // 仅允许读取常见图片扩展名，防止该命令被用作任意文件读取原语
-    let ext = Path::new(&path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    const ALLOWED_EXT: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
-    if !ALLOWED_EXT.contains(&ext.as_str()) {
-        return Err(format!("仅支持读取图片文件，拒绝访问: {ext}"));
+/// 归一化路径（解析 . 和 ..，统一 / 分隔），返回不含尾斜杠的规范化字符串。
+fn normalize_path(p: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for seg in p.split(['/', '\\']) {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                out.pop();
+            }
+            _ => out.push(seg.to_string()),
+        }
     }
+    out.join("/")
+}
 
-    let data = fs::read(&path).map_err(|e| format!("读取图片失败: {e}"))?;
-    let mime = match ext.as_str() {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "bmp" => "image/bmp",
-        "svg" => "image/svg+xml",
-        _ => "image/png",
-    };
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-    Ok(format!("data:{mime};base64,{b64}"))
+/// 判断 path 是否在 base_dir 目录内（服务端路径包含校验，防止 ../ 逃逸）。
+fn is_path_within(base_dir: &str, path: &str) -> bool {
+    if base_dir.is_empty() {
+        return false;
+    }
+    let b = normalize_path(base_dir).trim_end_matches('/').to_string();
+    let a = normalize_path(path);
+    a == b || a.starts_with(&format!("{b}/"))
+}
+
+#[tauri::command]
+async fn resolve_image(path: String, base_dir: String) -> Result<String, String> {
+    // fs::read + base64 是阻塞 IO，放到阻塞线程池，避免卡住主线程（UI）
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        // 服务端路径包含校验：path 必须位于 base_dir 内（不信任渲染层的检查）
+        if !is_path_within(&base_dir, &path) {
+            return Err("图片路径超出文档目录范围".to_string());
+        }
+        // 仅允许读取常见图片扩展名，防止该命令被用作任意文件读取原语
+        let ext = Path::new(&path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        const ALLOWED_EXT: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+        if !ALLOWED_EXT.contains(&ext.as_str()) {
+            return Err(format!("仅支持读取图片文件，拒绝访问: {ext}"));
+        }
+
+        // 限制文件大小，防止超大图片撑爆内存和 IPC 传输
+        const MAX_IMAGE_SIZE: u64 = 50 * 1024 * 1024;
+        let meta = fs::metadata(&path).map_err(|e| format!("读取图片信息失败: {e}"))?;
+        if meta.len() > MAX_IMAGE_SIZE {
+            return Err(format!("图片文件过大（>50MB）：{}", meta.len() / 1024 / 1024));
+        }
+
+        let data = fs::read(&path).map_err(|e| format!("读取图片失败: {e}"))?;
+        let mime = match ext.as_str() {
+            "jpg" | "jpeg" => "image/jpeg",
+            "png" => "image/png",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "bmp" => "image/bmp",
+            "svg" => "image/svg+xml",
+            _ => "image/png",
+        };
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+        Ok(format!("data:{mime};base64,{b64}"))
+    })
+    .await
+    .map_err(|e| format!("图片解析任务失败: {e}"))?
 }
 
 #[tauri::command]
@@ -233,6 +291,8 @@ async fn save_binary_file_dialog(
 
 #[tauri::command]
 fn exit_app(app: tauri::AppHandle) {
+    // 前端已完成未保存确认，置位后关窗才会真正走到 CloseRequested 的状态保存
+    ALLOW_CLOSE.store(true, Ordering::SeqCst);
     // 关闭窗口触发 CloseRequested → 自动保存状态并优雅退出
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.close();
@@ -330,6 +390,9 @@ async fn export_pdf(
         })
         .unwrap_or_else(|| "Untitled".to_owned());
 
+    // 哨兵值：带唯一标签，避免与用户文件名（title 前缀）撞车；精确匹配而非 contains
+    let sentinel = format!("PDF_READY_{pdf_label}");
+
     let full_html = format!(
         "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n\
 <style>\n\
@@ -354,10 +417,17 @@ strong {{ font-weight:bold; }}\n\
 em {{ font-style:italic; }}\n\
 del {{ text-decoration:line-through; }}\n\
 img {{ max-width:100%; }}\n\
-</style>\n</head>\n<body>\n{}\n</body>\n</html>",
-        doc_title, html
+</style>\n</head>\n<body>\n{1}\n\
+<script>window.addEventListener('load',function(){{document.title='{2}';}});\
+setTimeout(function(){{document.title='{2}';}},5000);</script>\n\
+</body>\n</html>",
+        doc_title, html, sentinel
     );
-    fs::write(&html_path, &full_html).map_err(|e| e.to_string())?;
+    // 写入失败也尝试清理可能的残留
+    fs::write(&html_path, &full_html).map_err(|e| {
+        let _ = fs::remove_file(&html_path);
+        e.to_string()
+    })?;
 
     // 步骤3：创建不可见 WebView 加载 HTML
     let file_url = url::Url::from_file_path(&html_path).map_err(|_| {
@@ -367,70 +437,101 @@ img {{ max-width:100%; }}\n\
     })?;
     let window = WebviewWindowBuilder::new(&app, &pdf_label, WebviewUrl::External(file_url))
         .visible(false)
+        // 文档 title 变化时同步到原生窗口标题，用于轮询检测渲染完成
+        .on_document_title_changed(|window, title| {
+            let _ = window.set_title(&title);
+        })
         .build()
         .map_err(|e| {
             let _ = fs::remove_file(&html_path); // 建窗失败也清理临时文件
             e.to_string()
         })?;
 
-    // 等待渲染完成
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // 等待渲染完成：轮询窗口标题，直到注入脚本设置的哨兵值出现（精确匹配）。
+    // 脚本在 load 事件后设哨兵，并带 5s setTimeout 兜底（网络图片挂起时也不至于等太久）。
+    let mut ready = false;
+    for _ in 0..70 {
+        if window.title().map(|t| t == sentinel).unwrap_or(false) {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    if !ready {
+        eprintln!("[export_pdf] 警告：页面未在预期时间内触发渲染完成哨兵，仍尝试导出");
+    }
 
     // 步骤4：PrintToPdf 直接写到用户选择的路径
     let dest_for_com = dest.clone();
     let (print_tx, print_rx) = mpsc::channel::<Result<(), String>>();
     let setup_tx = print_tx.clone();
 
-    let result: Result<(), String> = match window.with_webview(move |webview| {
-        let result = (|| -> Result<(), String> {
-            unsafe {
-                let controller = webview.controller();
-                let core = controller
-                    .CoreWebView2()
-                    .map_err(|e| format!("CoreWebView2: {e}"))?;
-                let wv: ICoreWebView2_7 = core
-                    .cast::<ICoreWebView2_7>()
-                    .map_err(|e| format!("cast ICoreWebView2_7: {e}"))?;
+    let (result, reported_failure): (Result<(), String>, bool) =
+        match window.with_webview(move |webview| {
+            let result = (|| -> Result<(), String> {
+                unsafe {
+                    let controller = webview.controller();
+                    let core = controller
+                        .CoreWebView2()
+                        .map_err(|e| format!("CoreWebView2: {e}"))?;
+                    let wv: ICoreWebView2_7 = core
+                        .cast::<ICoreWebView2_7>()
+                        .map_err(|e| format!("cast ICoreWebView2_7: {e}"))?;
 
-                let pdf_hstring = HSTRING::from(dest_for_com.as_str());
-                let settings: Option<&ICoreWebView2PrintSettings> = None;
+                    let pdf_hstring = HSTRING::from(dest_for_com.as_str());
+                    let settings: Option<&ICoreWebView2PrintSettings> = None;
 
-                let handler = PrintToPdfCompletedHandler::create(Box::new(
-                    move |result: windows::core::Result<()>,
-                          is_success: bool| {
-                        let _ = print_tx.send(
-                            if result.is_ok() && is_success {
-                                Ok(())
-                            } else {
-                                Err("PrintToPdf reported failure".to_string())
-                            },
-                        );
-                        Ok(())
-                    },
-                ));
+                    let handler = PrintToPdfCompletedHandler::create(Box::new(
+                        move |result: windows::core::Result<()>,
+                              is_success: bool| {
+                            let _ = print_tx.send(
+                                if result.is_ok() && is_success {
+                                    Ok(())
+                                } else {
+                                    Err("PrintToPdf reported failure".to_string())
+                                },
+                            );
+                            Ok(())
+                        },
+                    ));
 
-                wv.PrintToPdf(&pdf_hstring, settings, &handler)
-                    .map_err(|e| format!("PrintToPdf call: {e}"))?;
+                    wv.PrintToPdf(&pdf_hstring, settings, &handler)
+                        .map_err(|e| format!("PrintToPdf call: {e}"))?;
 
-                Ok(())
+                    Ok(())
+                }
+            })();
+            if let Err(e) = result {
+                let _ = setup_tx.send(Err(e));
             }
-        })();
-        if let Err(e) = result {
-            let _ = setup_tx.send(Err(e));
-        }
-    }) {
-        Err(e) => Err(e.to_string()),
-        Ok(()) => print_rx
-            .recv_timeout(std::time::Duration::from_secs(30))
-            .map_err(|e| format!("PrintToPdf timeout: {e}"))
-            .and_then(|r| r),
-    };
+        }) {
+            Err(e) => (Err(e.to_string()), false),
+            Ok(()) => match print_rx.recv_timeout(std::time::Duration::from_secs(60)) {
+                Ok(Ok(())) => (Ok(()), false),
+                Ok(Err(e)) => (Err(e), true), // 明确失败
+                Err(_) => {
+                    // 超时：给一次宽限，可能只是慢；仍收不到再判超时
+                    match print_rx.recv_timeout(std::time::Duration::from_secs(10)) {
+                        Ok(Ok(())) => (Ok(()), false),
+                        Ok(Err(e)) => (Err(e), true),
+                        Err(_) => (Err("PrintToPdf 超时".to_string()), false),
+                    }
+                }
+            },
+        };
 
     // 无论成功、失败还是超时，都清理临时文件和隐藏窗口
     let _ = fs::remove_file(&html_path);
     let _ = window.close();
 
-    result?;
+    if let Err(e) = result {
+        if reported_failure {
+            // 明确失败：输出文件可能不完整，删除避免用户拿到坏 PDF
+            let _ = fs::remove_file(&dest);
+        }
+        // 超时/设置错误：不删 dest —— 写入可能仍在进行或文件其实完整，删除会毁掉用户要的文件
+        return Err(e);
+    }
 
     Ok(Some(dest))
 }
@@ -488,8 +589,15 @@ pub fn run() {
                 // 关闭时保存窗口状态
                 let h = handle.clone();
                 window.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { .. } = event {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
                         let w = h.get_webview_window("main").unwrap();
+                        // 未经前端确认的关闭请求：阻止关闭，把决定权交给 JS 的提示框。
+                        // 确认后 JS 调用 exit_app 置位标志并重新关窗，届时才执行下面的状态保存。
+                        if !ALLOW_CLOSE.load(Ordering::SeqCst) {
+                            api.prevent_close();
+                            let _ = w.emit("close-requested", ());
+                            return;
+                        }
                         let is_max = w.is_maximized().unwrap_or(false);
                         let state = if is_max {
                             serde_json::json!({ "isMaximized": true }).to_string()

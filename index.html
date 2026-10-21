@@ -8,7 +8,9 @@
   // 同步读取 localStorage 缓存的主题，消除启动白屏/闪烁
   try {
     var cfg = JSON.parse(localStorage.getItem('md-editor-config'));
-    if (cfg && cfg.theme) {
+    // 只接受已知主题名（与 styles.css 的 CSS 变量选择器一致），非法值保持 html 上静态的 class="dark"
+    var themes = ['light', 'dark', 'solarized-light', 'solarized-dark'];
+    if (cfg && themes.indexOf(cfg.theme) >= 0) {
       document.documentElement.className = cfg.theme;
     }
   } catch(e) {}

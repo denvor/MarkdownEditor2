@@ -16,9 +16,11 @@ export function setCurrentFile(path) {
   StatusBar.update();
 }
 
-/** 当前文件所在目录（相对路径图片的基准路径） */
+/** 当前文件所在目录（相对路径图片的基准路径）；无目录分隔符时返回 null */
 export function getBaseDir() {
-  return currentFile ? currentFile.replace(/[/\\][^/\\]+$/, '') : null;
+  if (!currentFile) return null;
+  const idx = Math.max(currentFile.lastIndexOf('/'), currentFile.lastIndexOf('\\'));
+  return idx >= 0 ? currentFile.slice(0, idx) : null;
 }
 
 /** 当前内容与保存的快照是否不同 */
